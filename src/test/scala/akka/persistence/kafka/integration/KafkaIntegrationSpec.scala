@@ -25,6 +25,13 @@ object KafkaIntegrationSpec {
       |akka.persistence.snapshot-store.plugin = "kafka-snapshot-store"
       |akka.test.single-expect-default = 10s
       |kafka-journal.event.producer.request.required.acks = 1
+      |kafka-journal.event.producer.bootstrap.servers = "localhost:9092"
+      |kafka-journal.consumer.session.timeout.ms = 30000
+      |kafka-journal.consumer.socket.receive.buffer.bytes = 65536
+      |kafka-journal.consumer.max.partition.fetch.bytes = 1048576
+      |kafka-journal.consumer.auto.offset.reset = "earliest"
+      |kafka-journal.consumer.enable.auto.commit = false
+      |kafka-journal.consumer.bootstrap.servers = "localhost:9092"
       |kafka-journal.zookeeper.connection.timeout.ms = 10000
       |kafka-journal.zookeeper.session.timeout.ms = 10000
       |test-server.zookeeper.dir = target/test/zookeeper
@@ -62,7 +69,7 @@ class KafkaIntegrationSpec extends TestKit(ActorSystem("test", KafkaIntegrationS
   val systemConfig = system.settings.config
   val journalConfig = new KafkaJournalConfig(systemConfig.getConfig("kafka-journal"))
   val serverConfig = new TestServerConfig(systemConfig.getConfig("test-server"))
-  val server = new TestServer(serverConfig)
+  val server = new TestServer(system, serverConfig)
 
   val serialization = SerializationExtension(system)
   val eventDecoder = new EventDecoder(system)
@@ -73,6 +80,7 @@ class KafkaIntegrationSpec extends TestKit(ActorSystem("test", KafkaIntegrationS
 
   override def beforeAll(): Unit = {
     super.beforeAll()
+    server.start()
     writeJournal("pa", 1 to 3 map { i => s"a-${i}" })
     writeJournal("pb", 1 to 3 map { i => s"b-${i}" })
     writeJournal("pc", 1 to 3 map { i => s"c-${i}" })
@@ -80,7 +88,7 @@ class KafkaIntegrationSpec extends TestKit(ActorSystem("test", KafkaIntegrationS
 
   override def afterAll(): Unit = {
     server.stop()
-    system.shutdown()
+    system.terminate
     super.afterAll()
   }
 
@@ -101,13 +109,13 @@ class KafkaIntegrationSpec extends TestKit(ActorSystem("test", KafkaIntegrationS
   }
 
   def readJournal(journalTopic: String): Seq[PersistentRepr] =
-    readMessages(journalTopic, 0).map(m => serialization.deserialize(payloadBytes(m), classOf[PersistentRepr]).get)
+    readMessages(journalTopic, 0).map(m => serialization.deserialize(m, classOf[PersistentRepr]).get)
 
   def readEvents(partition: Int): Seq[Event] =
-    readMessages("events", partition).map(m => eventDecoder.fromBytes(payloadBytes(m)))
+    readMessages("events", partition).map(m => eventDecoder.fromBytes(m))
 
-  def readMessages(topic: String, partition: Int): Seq[Message] =
-    new MessageIterator(kafka.hostName, kafka.port, topic, partition, 0, journalConfig.consumerConfig).toVector
+  def readMessages(topic: String, partition: Int): Seq[Array[Byte]] =
+    new MessageIterator(topic, partition, 0, journalConfig.consumerConfig).to[scala.collection.immutable.Seq]
 
   "A Kafka journal" must {
     "publish all events to the events topic by default" in {

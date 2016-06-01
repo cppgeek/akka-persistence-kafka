@@ -7,6 +7,8 @@ import com.typesafe.config.Config
 
 import kafka.producer.ProducerConfig
 import kafka.utils._
+import java.util.Properties
+import com.typesafe.config.ConfigValueFactory
 
 class KafkaJournalConfig(config: Config) extends MetadataConsumerConfig(config) {
   val pluginDispatcher: String =
@@ -16,13 +18,15 @@ class KafkaJournalConfig(config: Config) extends MetadataConsumerConfig(config) 
     config.getInt("write-concurrency")
 
   val eventTopicMapper: EventTopicMapper =
-    Utils.createObject[EventTopicMapper](config.getString("event.producer.topic.mapper.class"))
+    CoreUtils.createObject[EventTopicMapper](config.getString("event.producer.topic.mapper.class"))
 
-  def journalProducerConfig(brokers: List[Broker]): ProducerConfig =
-    new ProducerConfig(configToProperties(config.getConfig("producer"),
-      Map("metadata.broker.list" -> Broker.toString(brokers), "partition" -> config.getString("partition"))))
+  def journalProducerConfig: Config =
+    config.getConfig("producer").
+      withValue("key.serializer", ConfigValueFactory.fromAnyRef("org.apache.kafka.common.serialization.StringSerializer")).
+      withValue("value.serializer", ConfigValueFactory.fromAnyRef("org.apache.kafka.common.serialization.ByteArraySerializer"))
 
-  def eventProducerConfig(brokers: List[Broker]): ProducerConfig =
-    new ProducerConfig(configToProperties(config.getConfig("event.producer"),
-      Map("metadata.broker.list" -> Broker.toString(brokers))))
+  def eventProducerConfig: Config =
+    config.getConfig("event.producer").
+      withValue("key.serializer", ConfigValueFactory.fromAnyRef("org.apache.kafka.common.serialization.StringSerializer")).
+      withValue("value.serializer", ConfigValueFactory.fromAnyRef("org.apache.kafka.common.serialization.ByteArraySerializer"))
 }

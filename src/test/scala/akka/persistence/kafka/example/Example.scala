@@ -5,15 +5,15 @@ import java.util.Properties
 import scala.collection.immutable.Seq
 
 import akka.actor._
-import akka.persistence.{PersistenceFailure, PersistentActor, PersistentRepr, RecoveryFailure, SaveSnapshotFailure, SaveSnapshotSuccess, SnapshotOffer}
-import akka.persistence.kafka.{EventDecoder, Event, EventTopicMapper}
-import akka.persistence.kafka.server.{TestServerConfig, TestServer}
+import akka.persistence.{ PersistentActor, PersistentRepr, SaveSnapshotFailure, SaveSnapshotSuccess, SnapshotOffer }
+import akka.persistence.kafka.{ EventDecoder, Event, EventTopicMapper }
+import akka.persistence.kafka.server.{ TestServerConfig, TestServer }
 import akka.serialization.SerializationExtension
 
 import com.typesafe.config.ConfigFactory
 
-import kafka.consumer.{Consumer, ConsumerConfig}
-import kafka.serializer.{DefaultDecoder, StringDecoder}
+import kafka.consumer.{ Consumer, ConsumerConfig }
+import kafka.serializer.{ DefaultDecoder, StringDecoder }
 
 class ExampleProcessor(val persistenceId: String) extends PersistentActor {
   import ExampleProcessor.Increment
@@ -28,8 +28,6 @@ class ExampleProcessor(val persistenceId: String) extends PersistentActor {
       println(s"snapshot saved (metadata = ${md})")
     case SaveSnapshotFailure(md, e) =>
       println(s"snapshot saving failed (metadata = ${md}, error = ${e.getMessage})")
-    case PersistenceFailure(payload, snr, e) =>
-      println(s"persistence failed (payload = ${payload}, sequenceNr = ${snr}, error = ${e.getMessage})")
   }
 
   def receiveRecover: Receive = {
@@ -38,8 +36,6 @@ class ExampleProcessor(val persistenceId: String) extends PersistentActor {
     case SnapshotOffer(md, snapshot: Int) =>
       state = snapshot
       println(s"state initialized: ${state} (metadata = ${md})")
-    case RecoveryFailure(e) =>
-      println(s"recovery failed (error = ${e.getMessage})")
   }
 
   def update(i: Increment): Unit = {
@@ -71,7 +67,8 @@ object ExampleConsumer extends App {
   val props = new Properties()
   props.put("group.id", "consumer-1")
   props.put("zookeeper.connect", "localhost:2181")
-  props.put("auto.offset.reset", "smallest")
+  props.put("bootstrap.servers", "localhost:9092")
+  props.put("auto.offset.reset", "earliest")
   props.put("auto.commit.enable", "false")
 
   val system = ActorSystem("consumer")
@@ -90,7 +87,8 @@ object ExampleJournalConsumer extends App {
   val props = new Properties()
   props.put("group.id", "consumer-2")
   props.put("zookeeper.connect", "localhost:2181")
-  props.put("auto.offset.reset", "smallest")
+  props.put("bootstrap.servers", "localhost:9092")
+  props.put("auto.offset.reset", "earliest")
   props.put("auto.commit.enable", "false")
 
   val system = ActorSystem("example")
@@ -107,5 +105,5 @@ object ExampleJournalConsumer extends App {
 }
 
 object ExampleServer extends App {
-  new TestServer(TestServerConfig.load("example"))
+  //new TestServer(TestServerConfig.load("example"))
 }

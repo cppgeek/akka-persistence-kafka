@@ -9,6 +9,11 @@ import com.typesafe.config._
 import kafka.server._
 
 import org.apache.curator.test.TestingServer
+import org.apache.curator.framework.CuratorFrameworkFactory
+import org.apache.curator.retry.ExponentialBackoffRetry
+import akka.event.LogSource
+import akka.event.Logging
+import akka.actor.ActorSystem
 
 object TestServerConfig {
   def load(): TestServerConfig =
@@ -32,9 +37,15 @@ class TestServerConfig(config: Config) {
       Map("zookeeper.connect" -> s"localhost:${zookeeper.port}", "host.name" -> "localhost")))
 }
 
-class TestServer(config: TestServerConfig = TestServerConfig.load()) {
-  val zookeeper = new TestZookeeperServer(config)
-  val kafka = new TestKafkaServer(config)
+class TestServer(system: ActorSystem, config: TestServerConfig = TestServerConfig.load()) extends LogSupport[TestServer] {
+  val log = Logging(system, this)
+  val zookeeper = new TestZookeeperServer(system, config)
+  val kafka = new TestKafkaServer(system, config)
+
+  def start() = {
+    zookeeper.start()
+    kafka.start()
+  }
 
   def stop(): Unit = {
     kafka.stop()
@@ -42,28 +53,42 @@ class TestServer(config: TestServerConfig = TestServerConfig.load()) {
   }
 }
 
-class TestZookeeperServer(config: TestServerConfig) {
+class TestZookeeperServer(system: ActorSystem, config: TestServerConfig) extends LogSupport[TestZookeeperServer] {
   import config._
+  val log = Logging(system, this)
+  private val server: TestingServer = new TestingServer(zookeeper.port, new File(zookeeper.dir), false)
 
-  private val server: TestingServer =
-    new TestingServer(zookeeper.port, new File(zookeeper.dir))
-
-  def stop(): Unit = server.stop()
-}
-
-class TestKafkaServer(config: TestServerConfig) {
-  private val server: KafkaServer =
-    new KafkaServer(config.kafka)
-
-  start()
-
-  def start(): Unit = {
-    server.startup()
+  def start() = {
+    server.start()
   }
 
   def stop(): Unit = {
-    server.shutdown()
-    server.awaitShutdown()
+    log.info("Stopping Zookeeper...")
+    server.stop()
   }
 }
 
+class TestKafkaServer(system: ActorSystem, config: TestServerConfig) extends LogSupport[TestKafkaServer] {
+  val log = Logging(system, this)
+  private val server: KafkaServer = new KafkaServer(config.kafka)
+
+  val zkClient = CuratorFrameworkFactory.newClient(config.kafka.zkConnect, new ExponentialBackoffRetry(1000, 3))
+
+  def start(): Unit = {
+    log.info("Waiting for Zookeeper to start...")
+    zkClient.start
+    zkClient.blockUntilConnected()
+    log.info("Starting Kafka...")
+    server.startup()
+    log.info("Waiting for Kafka to complete startup...")
+    Thread.sleep(3000)
+  }
+
+  def stop(): Unit = {
+    log.info("Stopping Kafka...")
+    server.shutdown()
+    server.awaitShutdown()
+    log.info("Closing Zookeeper client...")
+    zkClient.close
+  }
+}

@@ -18,8 +18,18 @@ object KafkaLoadSpec {
       |akka.persistence.journal.plugin = "kafka-journal"
       |akka.persistence.snapshot-store.plugin = "kafka-snapshot-store"
       |akka.test.single-expect-default = 10s
-      |kafka-journal.event.producer.request.required.acks = 1
       |kafka-journal.event.producer.topic.mapper.class = "akka.persistence.kafka.EmptyEventTopicMapper"
+      |kafka-journal.event.producer.request.required.acks = 1
+      |kafka-journal.event.producer.bootstrap.servers = "localhost:9092"
+      |kafka-journal.event.producer.session.timeout.ms = 30000
+      |kafka-journal.producer.session.timeout.ms = 30000
+      |kafka-journal.producer.bootstrap.servers = "localhost:9092"
+      |kafka-journal.consumer.session.timeout.ms = 30000
+      |kafka-journal.consumer.socket.receive.buffer.bytes = 65536
+      |kafka-journal.consumer.max.partition.fetch.bytes = 1048576
+      |kafka-journal.consumer.auto.offset.reset = "earliest"
+      |kafka-journal.consumer.enable.auto.commit = false
+      |kafka-journal.consumer.bootstrap.servers = "localhost:9092"
       |kafka-journal.zookeeper.connection.timeout.ms = 10000
       |kafka-journal.zookeeper.session.timeout.ms = 10000
       |test-server.zookeeper.dir = target/test/zookeeper
@@ -54,9 +64,9 @@ object KafkaLoadSpec {
 
     def receiveCommand: Receive = {
       case c @ "start" =>
-        defer(c) { _ => startMeasure(); sender ! "started" }
+        deferAsync(c) { _ => startMeasure(); sender ! "started" }
       case c @ "stop" =>
-        defer(c) { _ => stopMeasure() }
+        deferAsync(c) { _ => stopMeasure() }
       case payload: String =>
         persistAsync(payload)(handle)
     }
@@ -73,17 +83,22 @@ class KafkaLoadSpec extends TestKit(ActorSystem("test", KafkaLoadSpec.config)) w
   val systemConfig = system.settings.config
   val journalConfig = new KafkaJournalConfig(systemConfig.getConfig("kafka-journal"))
   val serverConfig = new TestServerConfig(systemConfig.getConfig("test-server"))
-  val server = new TestServer(serverConfig)
+  val server = new TestServer(system, serverConfig)
+
+  override protected def beforeAll(): Unit = {
+    server.start()
+    super.beforeAll()
+  }
 
   override def afterAll(): Unit = {
     server.stop()
-    system.shutdown()
+    system.terminate
     super.afterAll()
   }
 
   "A Kafka Journal" must {
     "have some reasonable throughput" in {
-      val warmCycles = 100L  // set to 10000L to get reasonable results
+      val warmCycles = 100L // set to 10000L to get reasonable results
       val loadCycles = 1000L // set to 300000L to get reasonable results
 
       val processor1 = system.actorOf(Props(classOf[TestPersistentActor], "test"))

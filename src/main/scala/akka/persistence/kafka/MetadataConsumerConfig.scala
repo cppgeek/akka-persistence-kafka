@@ -2,8 +2,9 @@ package akka.persistence.kafka
 
 import com.typesafe.config.Config
 
-import kafka.consumer.ConsumerConfig
 import kafka.utils._
+import java.util.Properties
+import com.typesafe.config.ConfigValueFactory
 
 class MetadataConsumerConfig(config: Config) {
   val partition: Int =
@@ -12,7 +13,9 @@ class MetadataConsumerConfig(config: Config) {
   val zookeeperConfig: ZKConfig =
     new ZKConfig(new VerifiableProperties(configToProperties(config)))
 
-  val consumerConfig: ConsumerConfig =
-    new ConsumerConfig(configToProperties(config.getConfig("consumer"),
-      Map("zookeeper.connect" -> zookeeperConfig.zkConnect, "group.id" -> "snapshot")))
+  val consumerConfig: Config =
+    config.getConfig("consumer").
+      withValue("group.id", ConfigValueFactory.fromAnyRef("snapshot")).
+      withValue("key.deserializer", ConfigValueFactory.fromAnyRef("org.apache.kafka.common.serialization.StringDeserializer")).
+      withValue("value.deserializer", ConfigValueFactory.fromAnyRef("org.apache.kafka.common.serialization.ByteArrayDeserializer"))
 }

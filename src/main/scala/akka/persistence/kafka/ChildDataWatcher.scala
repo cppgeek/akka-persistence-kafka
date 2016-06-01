@@ -3,45 +3,45 @@ package akka.persistence.kafka
 import java.util
 
 import org.I0Itec.zkclient.exception.ZkNoNodeException
-import org.I0Itec.zkclient.{IZkDataListener, ZkClient, IZkChildListener}
+import org.I0Itec.zkclient.{ IZkDataListener, ZkClient, IZkChildListener }
 
-private [kafka] class ChildDataWatcher[T](
+private[kafka] class ChildDataWatcher[T](
   zkClient: ZkClient,
   path: String,
   cb: (Map[String, T]) => Unit)
-  extends IZkChildListener
-  with IZkDataListener {
+    extends IZkChildListener
+    with IZkDataListener {
 
   import scala.collection.JavaConverters._
 
   private var childDataMap = Map[String, T]()
 
-  def start(): Map[String, T] = {
-    val eventLock = zkClient.getEventLock
-    try {
-      eventLock.lock()
-      val children = zkClient.subscribeChildChanges(path, this)
-      if (children != null) {
-        handleChildChange(path, children, invokeCallback = false)
-      }
-      childDataMap
-    } finally {
-      eventLock.unlock()
-    }
-  }
-
-  def stop(): Unit = {
-    val eventLock = zkClient.getEventLock
-    try {
-      eventLock.lock()
-      zkClient.unsubscribeChildChanges(path, this)
-      childDataMap.foreach {
-        case (c, _) => zkClient.unsubscribeDataChanges(childPath(c), this)
-      }
-    } finally {
-      eventLock.unlock()
-    }
-  }
+  //  def start(): Map[String, T] = {
+  //    val eventLock = zkClient.getEventLock
+  //    try {
+  //      eventLock.lock()
+  //      val children = zkClient.subscribeChildChanges(path, this)
+  //      if (children != null) {
+  //        handleChildChange(path, children, invokeCallback = false)
+  //      }
+  //      childDataMap
+  //    } finally {
+  //      eventLock.unlock()
+  //    }
+  //  }
+  //
+  //  def stop(): Unit = {
+  //    val eventLock = zkClient.getEventLock
+  //    try {
+  //      eventLock.lock()
+  //      zkClient.unsubscribeChildChanges(path, this)
+  //      childDataMap.foreach {
+  //        case (c, _) => zkClient.unsubscribeDataChanges(childPath(c), this)
+  //      }
+  //    } finally {
+  //      eventLock.unlock()
+  //    }
+  //  }
 
   def handleChildChange(parentPath: String, currentChilds: util.List[String]): Unit = {
     handleChildChange(parentPath, currentChilds, invokeCallback = true)

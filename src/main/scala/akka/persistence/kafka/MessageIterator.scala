@@ -4,6 +4,15 @@ import kafka.api.FetchRequestBuilder
 import kafka.common.ErrorMapping
 import kafka.consumer._
 import kafka.message._
+import org.apache.kafka.clients.consumer.KafkaConsumer
+import java.util.Properties
+import java.util.Arrays
+import org.apache.kafka.common.TopicPartition
+import org.apache.kafka.clients.consumer.ConsumerRecord
+import com.typesafe.config.Config
+import akka.event.Logging
+import akka.actor.ActorSystem
+import scala.annotation.tailrec
 
 object MessageUtil {
   def payloadBytes(m: Message): Array[Byte] = {
@@ -15,33 +24,51 @@ object MessageUtil {
   }
 }
 
-class MessageIterator(host: String, port: Int, topic: String, partition: Int, offset: Long, consumerConfig: ConsumerConfig) extends Iterator[Message] {
-  import consumerConfig._
+class MessageIterator(topic: String, part: Int, offset: Long, consumerConfig: Config)(implicit system: ActorSystem) extends Iterator[Array[Byte]] with LogSupport[MessageIterator] {
   import ErrorMapping._
 
-  val consumer = new SimpleConsumer(host, port, socketTimeoutMs, socketReceiveBufferBytes, clientId)
+  val log = Logging(system, this)
+
+  val consumer = initConsumer
   var iter = iterator(offset)
   var readMessages = 0
   var nextOffset = offset
+  def partition = new TopicPartition(topic, part)
 
-  def iterator(offset: Long): Iterator[MessageAndOffset] = {
-    val request = new FetchRequestBuilder().addFetch(topic, partition, offset, fetchMessageMaxBytes).build()
-    val response = consumer.fetch(request)
-
-    response.errorCode(topic, partition) match {
-      case NoError => response.messageSet(topic, partition).iterator
-      case anError => throw exceptionFor(anError)
-    }
+  def initConsumer: KafkaConsumer[String, Array[Byte]] = {
+    val consumer = new KafkaConsumer[String, Array[Byte]](configToProperties(consumerConfig))
+    log.debug("Assigning consumer to partition {}", partition)
+    consumer assign Arrays.asList(partition)
+    consumer
   }
 
-  def next(): Message = {
-    val mo = iter.next()
+  def iterator(offset: Long): Iterator[ConsumerRecord[String, Array[Byte]]] = {
+    log.debug("Creating iterator for offset {}", offset)
+    if (offset == -1)
+      consumer.seekToBeginning(partition)
+    else
+      consumer.seek(partition, offset)
+
+    log.debug("Polling for records...")
+    val response = consumer.poll(1000)
+    log.debug("Received {} messages from Kafka", response.count())
+
+    import scala.collection.JavaConverters._
+
+    val result = response.iterator().asScala
+    log.debug("Returning message iterator {}", result)
+
+    result
+  }
+
+  def next(): Array[Byte] = {
+    val record = iter.next()
     readMessages += 1
-    nextOffset = mo.nextOffset
-    mo.message
+    nextOffset = record.offset + 1
+    record.value()
   }
 
-  @annotation.tailrec
+  @tailrec
   final def hasNext: Boolean =
     if (iter.hasNext) {
       true
