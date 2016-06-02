@@ -20,13 +20,16 @@ class StickyPartitioner extends Partitioner {
 
   def close(): Unit = {}
 
-  def partition(x$1: String, x$2: Any, x$3: Array[Byte], x$4: Any, x$5: Array[Byte], x$6: Cluster): Int = {
-    StickyPartitioner.actorSystem.get.map {
-      system => system.settings.config.getInt("kafka-journal.partition")
+  def partition(topic: String, key: Any, keyBytes: Array[Byte], value: Any, valueBytes: Array[Byte], cluster: Cluster): Int = {
+    StickyPartitioner.actorSystem.get.map { system =>
+      key match {
+        case "journal"  => system.settings.config.getInt("kafka-journal.partition")
+        case "snapshot" => system.settings.config.getInt("kafka-snapshot-store.partition")
+        case _          => 0
+      }
+
     } getOrElse 0
   }
 
-  def configure(configs: java.util.Map[String, _]): Unit = {
-
-  }
+  def configure(configs: java.util.Map[String, _]): Unit = {}
 }

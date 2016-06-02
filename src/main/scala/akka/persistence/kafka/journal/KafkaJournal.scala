@@ -85,13 +85,13 @@ class KafkaJournal extends AsyncWriteJournal with MetadataConsumer with ActorLog
   var eventProducerConfig = config.eventProducerConfig
 
   lazy val writer: ActorRef = initWriter()
-  implicit val writeTimeout = Timeout(journalProducerConfig.getLong("session.timeout.ms") milliseconds)
+  implicit val writeTimeout = Timeout(journalProducerConfig.getLong("request.timeout.ms") milliseconds)
 
   // Transient deletions only to pass TCK (persistent not supported)
   var deletions: Deletions = Map.empty
 
   def asyncWriteMessages(messages: Seq[AtomicWrite]): Future[Seq[Try[Unit]]] = {
-    log.debug("Going to write messages {}", messages)
+    log.debug("Going to write messages {}", messages.size)
     (writer ? messages).mapTo[Seq[Future[Try[Unit]]]].flatMap { x => Future.sequence(x) }
   }
 
@@ -144,7 +144,11 @@ class KafkaJournal extends AsyncWriteJournal with MetadataConsumer with ActorLog
     val iter = persistentIterator(journalTopic(persistenceId), adjustedFrom - 1L)
 
     iter.map(p => if (p.sequenceNr <= deletedTo) p.update(deleted = true) else p).foldLeft(adjustedFrom) {
-      case (snr, p) => if (p.sequenceNr >= adjustedFrom && p.sequenceNr <= adjustedTo) callback(p); p.sequenceNr
+      case (_, p) =>
+        if (p.sequenceNr >= adjustedFrom && p.sequenceNr <= adjustedTo) {
+          callback(p)
+        }
+        p.sequenceNr
     }
 
   }
@@ -153,7 +157,6 @@ class KafkaJournal extends AsyncWriteJournal with MetadataConsumer with ActorLog
     log.debug("Creating MessageIterator for topic {}, offset {}", topic, offset)
     val msgIter = new MessageIterator(topic, config.partition, offset, config.consumerConfig)
     msgIter.map { m =>
-      log.debug("Deserializing message {}... ", m)
       serialization.deserialize(m, classOf[PersistentRepr]).get
     }
   }
@@ -191,7 +194,7 @@ private class KafkaJournalWriter(var config: KafkaJournalWriterConfig) extends A
 
   def writeMessages(messages: Seq[AtomicWrite]): Seq[Future[Try[Unit]]] = {
 
-    log.debug("Writing {} to Kafka", messages)
+    log.debug("Sending {} AtomicWrites to Kafka", messages.size)
 
     def batchResult(atomicBatch: Seq[Future[Try[RecordMetadata]]]): Future[Try[Unit]] =
       atomicBatch.foldLeft(Future.successful(Success(): Try[Unit])) { (acc, f) =>
@@ -209,7 +212,7 @@ private class KafkaJournalWriter(var config: KafkaJournalWriterConfig) extends A
         p <- m.payload
       } yield {
         config.serialization.serialize(p) match {
-          case Success(s) => msgProducer.send(new ProducerRecord[String, Array[Byte]](journalTopic(m.persistenceId), "static", s))
+          case Success(s) => msgProducer.send(new ProducerRecord[String, Array[Byte]](journalTopic(m.persistenceId), "journal", s))
           case Failure(e) => val t = new CompletableFuture(); t.completeExceptionally(e); t
         }
       }) map { x => Future { Try { x.get } } }
@@ -254,6 +257,7 @@ private class KafkaJournalWriter(var config: KafkaJournalWriterConfig) extends A
   }
 
   override def postStop(): Unit = {
+    log.debug("Stopping message and event producers...")
     msgProducer.close()
     evtProducer.close()
     super.postStop()

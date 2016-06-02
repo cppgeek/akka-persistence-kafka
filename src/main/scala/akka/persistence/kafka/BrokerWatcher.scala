@@ -24,14 +24,14 @@ class BrokerWatcher(zkConfig: ZKConfig, listener: ActorRef) {
     listener ! BrokersUpdated(buildBrokers(d))
   })
 
-  //  def start(): List[Broker] = {
-  //    buildBrokers(childWatcher.start())
-  //  }
-  //
-  //  def stop(): Unit = {
-  //    childWatcher.stop()
-  //    zkClient.close()
-  //  }
+  def start(): List[Broker] = {
+    buildBrokers(childWatcher.start())
+  }
+
+  def stop(): Unit = {
+    childWatcher.stop()
+    zkClient.close()
+  }
 
   private def buildBrokers(d: Map[String, String]): List[Broker] = {
     d.values.map(Broker.fromString).flatMap(x => x).toList

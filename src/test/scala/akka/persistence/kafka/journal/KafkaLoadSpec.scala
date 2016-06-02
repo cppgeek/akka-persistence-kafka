@@ -11,10 +11,16 @@ import akka.testkit._
 import com.typesafe.config.ConfigFactory
 
 import org.scalatest._
+import akka.persistence.journal.JournalPerfSpec
+import akka.persistence.CapabilityFlag
 
 object KafkaLoadSpec {
   val config = ConfigFactory.parseString(
     """
+      |akka {
+      |  loggers = ["akka.event.slf4j.Slf4jLogger"]
+      |  loglevel = "DEBUG"
+      | }
       |akka.persistence.journal.plugin = "kafka-journal"
       |akka.persistence.snapshot-store.plugin = "kafka-snapshot-store"
       |akka.test.single-expect-default = 10s
@@ -34,6 +40,7 @@ object KafkaLoadSpec {
       |kafka-journal.zookeeper.session.timeout.ms = 10000
       |test-server.zookeeper.dir = target/test/zookeeper
       |test-server.kafka.log.dirs = target/test/kafka
+      |test-server.kafka.log.cleaner.enable = false
     """.stripMargin)
 
   trait Measure extends { this: Actor ⇒
@@ -59,13 +66,15 @@ object KafkaLoadSpec {
     def lastSequenceNr: Long
   }
 
-  class TestPersistentActor(val persistenceId: String) extends PersistentActor with Measure {
+  class TestPersistentActor(val persistenceId: String) extends PersistentActor with Measure with ActorLogging {
     def receiveRecover: Receive = handle
 
     def receiveCommand: Receive = {
       case c @ "start" =>
+        log.debug("Starting load test...")
         deferAsync(c) { _ => startMeasure(); sender ! "started" }
       case c @ "stop" =>
+        log.debug("Stopping load test...")
         deferAsync(c) { _ => stopMeasure() }
       case payload: String =>
         persistAsync(payload)(handle)
@@ -77,26 +86,29 @@ object KafkaLoadSpec {
   }
 }
 
-class KafkaLoadSpec extends TestKit(ActorSystem("test", KafkaLoadSpec.config)) with ImplicitSender with WordSpecLike with Matchers with KafkaCleanup {
+class KafkaLoadSpec extends JournalPerfSpec(KafkaLoadSpec.config) with ImplicitSender {
   import KafkaLoadSpec._
 
   val systemConfig = system.settings.config
-  val journalConfig = new KafkaJournalConfig(systemConfig.getConfig("kafka-journal"))
   val serverConfig = new TestServerConfig(systemConfig.getConfig("test-server"))
   val server = new TestServer(system, serverConfig)
 
+  def supportsRejectingNonSerializableObjects: CapabilityFlag = true
+
   override protected def beforeAll(): Unit = {
-    server.start()
     super.beforeAll()
+    server.start()
   }
 
   override def afterAll(): Unit = {
     server.stop()
+    Thread.sleep(5000)
     system.terminate
     super.afterAll()
   }
 
   "A Kafka Journal" must {
+
     "have some reasonable throughput" in {
       val warmCycles = 100L // set to 10000L to get reasonable results
       val loadCycles = 1000L // set to 300000L to get reasonable results

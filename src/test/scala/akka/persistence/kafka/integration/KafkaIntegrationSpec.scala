@@ -20,10 +20,15 @@ import _root_.kafka.message.Message
 
 object KafkaIntegrationSpec {
   val config = ConfigFactory.parseString(
-    """
+    s"""
+      |akka {
+      |  loggers = ["akka.event.slf4j.Slf4jLogger"]
+      |  loglevel = "DEBUG"
+      | }
       |akka.persistence.journal.plugin = "kafka-journal"
       |akka.persistence.snapshot-store.plugin = "kafka-snapshot-store"
       |akka.test.single-expect-default = 10s
+      |
       |kafka-journal.event.producer.request.required.acks = 1
       |kafka-journal.event.producer.bootstrap.servers = "localhost:9092"
       |kafka-journal.consumer.session.timeout.ms = 30000
@@ -32,13 +37,16 @@ object KafkaIntegrationSpec {
       |kafka-journal.consumer.auto.offset.reset = "earliest"
       |kafka-journal.consumer.enable.auto.commit = false
       |kafka-journal.consumer.bootstrap.servers = "localhost:9092"
-      |kafka-journal.zookeeper.connection.timeout.ms = 10000
-      |kafka-journal.zookeeper.session.timeout.ms = 10000
+      |
+      |kafka-snapshot-store.prefix = "snapshot-"
+      |kafka-snapshot-store.consumer.max.partition.fetch.bytes = ${1000 * 1000 * 11}
+      |kafka-snapshot-store.producer.max.request.size = ${1000 * 1000 * 11}
+      |
       |test-server.zookeeper.dir = target/test/zookeeper
       |test-server.kafka.log.dirs = target/test/kafka
     """.stripMargin)
 
-  class TestPersistentActor(val persistenceId: String, probe: ActorRef) extends PersistentActor {
+  class TestPersistentActor(val persistenceId: String, probe: ActorRef) extends PersistentActor with ActorLogging {
     def receiveCommand = {
       case s: String =>
         persist(s)(s => probe ! s)
@@ -49,6 +57,8 @@ object KafkaIntegrationSpec {
         probe ! s
       case s: String =>
         probe ! s
+      case a =>
+        log.debug("Received junk! {}", a)
     }
   }
 
@@ -62,10 +72,11 @@ object KafkaIntegrationSpec {
   }
 }
 
-class KafkaIntegrationSpec extends TestKit(ActorSystem("test", KafkaIntegrationSpec.config)) with ImplicitSender with WordSpecLike with Matchers with KafkaCleanup {
+class KafkaIntegrationSpec extends PluginSpec(KafkaIntegrationSpec.config) with ImplicitSender with WordSpecLike with Matchers with BeforeAndAfterAll {
   import KafkaIntegrationSpec._
   import MessageUtil._
 
+  implicit lazy val system = ActorSystem("test", config)
   val systemConfig = system.settings.config
   val journalConfig = new KafkaJournalConfig(systemConfig.getConfig("kafka-journal"))
   val serverConfig = new TestServerConfig(systemConfig.getConfig("test-server"))
@@ -88,6 +99,7 @@ class KafkaIntegrationSpec extends TestKit(ActorSystem("test", KafkaIntegrationS
 
   override def afterAll(): Unit = {
     server.stop()
+    Thread.sleep(5000)
     system.terminate
     super.afterAll()
   }
@@ -157,19 +169,26 @@ class KafkaIntegrationSpec extends TestKit(ActorSystem("test", KafkaIntegrationS
         }
       }
       "fallback to non-orphan snapshots" in {
+        //        val senderProbe = TestProbe()
         val persistenceId = "pa"
 
+        //        store.tell(SaveSnapshot(SnapshotMetadata(persistenceId, 2), "test"), senderProbe.ref)
         store ! SaveSnapshot(SnapshotMetadata(persistenceId, 2), "test")
-        expectMsgPF() { case SaveSnapshotSuccess(md) => md.sequenceNr should be(2L) }
+        val md1 = expectMsgPF() { case SaveSnapshotSuccess(md) => md }
+        md1.sequenceNr should be(2L)
 
+        //        store.tell(SaveSnapshot(SnapshotMetadata(persistenceId, 4), "test"), senderProbe.ref)
         store ! SaveSnapshot(SnapshotMetadata(persistenceId, 4), "test")
-        expectMsgPF() { case SaveSnapshotSuccess(md) => md.sequenceNr should be(4L) }
+        val md2 = expectMsgPF() { case SaveSnapshotSuccess(md) => md }
+        md2.sequenceNr should be(4L)
 
         withPersistentActor(persistenceId) { _ =>
-          expectMsgPF() { case SnapshotOffer(SnapshotMetadata(_, snr, _), _) => snr should be(2) }
+          val snr = expectMsgPF() { case SnapshotOffer(SnapshotMetadata(_, snr, _), _) => snr }
+          snr should be(2)
           expectMsg("a-3")
         }
       }
+
       "not ignore view snapshots (for which no corresponding journal topic exists)" in {
         val persistenceId = "pa"
         val viewId = "va"

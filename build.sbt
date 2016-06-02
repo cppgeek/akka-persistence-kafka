@@ -31,19 +31,6 @@ cancelable in Global := true
 testOptions in Test += Tests.Setup{ () => 
   println("Deleting Kafka data directory before tests...")
   sbt.IO.delete((kafkaDataDirectory in Test).value)
-  
-  println("Deleting test logs tests...")
-  
-  val filter = new java.io.FileFilter {
-    def accept(path: java.io.File): Boolean = {
-      path.getName.endsWith(".log")
-    }
-  }
-  
-  val files = (baseDirectory in Test).value.listFiles(filter)
-  
-  //files.foreach(f => f.delete)
-  
 }
  
 

@@ -14,6 +14,7 @@ import org.apache.curator.retry.ExponentialBackoffRetry
 import akka.event.LogSource
 import akka.event.Logging
 import akka.actor.ActorSystem
+import org.apache.commons.io.FileUtils
 
 object TestServerConfig {
   def load(): TestServerConfig =
@@ -39,10 +40,11 @@ class TestServerConfig(config: Config) {
 
 class TestServer(system: ActorSystem, config: TestServerConfig = TestServerConfig.load()) extends LogSupport[TestServer] {
   val log = Logging(system, this)
-  val zookeeper = new TestZookeeperServer(system, config)
-  val kafka = new TestKafkaServer(system, config)
+  lazy val zookeeper = new TestZookeeperServer(system, config)
+  lazy val kafka = new TestKafkaServer(system, config)
 
   def start() = {
+    FileUtils.deleteDirectory(new File("target/test"))
     zookeeper.start()
     kafka.start()
   }

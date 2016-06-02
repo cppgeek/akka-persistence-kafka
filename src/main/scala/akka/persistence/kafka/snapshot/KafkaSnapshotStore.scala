@@ -19,6 +19,8 @@ import akka.persistence.kafka.journal.{ ReadHighestSequenceNr, ReadHighestSequen
 import akka.persistence.snapshot.SnapshotStore
 import org.apache.kafka.clients.producer.KafkaProducer
 import org.apache.kafka.clients.producer.ProducerRecord
+import org.apache.kafka.clients.producer.Callback
+import org.apache.kafka.clients.producer.RecordMetadata
 
 /**
   * Optimized and fully async version of [[akka.persistence.snapshot.SnapshotStore]].
@@ -74,6 +76,7 @@ class KafkaSnapshotStore extends SnapshotStore with MetadataConsumer with ActorL
 
   val serialization = SerializationExtension(context.system)
   val config = new KafkaSnapshotStoreConfig(context.system.settings.config.getConfig("kafka-snapshot-store"))
+  val persistence = Persistence(system)
 
   override def postStop(): Unit = {
     super.postStop()
@@ -96,11 +99,15 @@ class KafkaSnapshotStore extends SnapshotStore with MetadataConsumer with ActorL
 
   def saveAsync(metadata: SnapshotMetadata, snapshot: Any): Future[Unit] = Future {
     val snapshotBytes = serialization.serialize(KafkaSnapshot(metadata, snapshot)).get
-    val snapshotRecord = new ProducerRecord(snapshotTopic(metadata.persistenceId), "static", snapshotBytes)
+    val snapshotRecord = new ProducerRecord(snapshotTopic(metadata.persistenceId), "snapshot", snapshotBytes)
     val snapshotProducer = new KafkaProducer[String, Array[Byte]](configToProperties(config.producerConfig))
     try {
       // TODO: take a producer from a pool
-      snapshotProducer.send(snapshotRecord)
+      val cb: Callback = new Callback {
+        def onCompletion(metadata: RecordMetadata, exception: Exception) =
+          log.debug("After sending snapshot to Kafka; metadata: {}, exception: {}", metadata, exception)
+      }
+      snapshotProducer.send(snapshotRecord, cb)
     } finally {
       snapshotProducer.close()
     }
@@ -109,12 +116,20 @@ class KafkaSnapshotStore extends SnapshotStore with MetadataConsumer with ActorL
   def loadAsync(persistenceId: String, criteria: SnapshotSelectionCriteria): Future[Option[SelectedSnapshot]] = {
     val singleDeletions = this.singleDeletions
     val rangeDeletions = this.rangeDeletions
+    log.debug("Snapshot store, loadAsync criteria {}, singleDeletions {}, rangeDeletions {}", criteria, singleDeletions, rangeDeletions)
     for {
       highest <- if (config.ignoreOrphan) highestJournalSequenceNr(persistenceId) else Future.successful(Long.MaxValue)
-      adjusted = if (config.ignoreOrphan &&
-        highest < criteria.maxSequenceNr &&
-        highest > 0L) criteria.copy(maxSequenceNr = highest) else criteria
       snapshot <- Future {
+
+        val adjusted = if (config.ignoreOrphan &&
+          highest < criteria.maxSequenceNr &&
+          highest > 0L) {
+          log.debug("loadAsync, highest = {}", highest)
+          criteria.copy(maxSequenceNr = highest)
+        } else {
+          criteria
+        }
+
         val topic = snapshotTopic(persistenceId)
 
         log.debug("In loadAsync, adjusted = {}", adjusted)
@@ -130,6 +145,8 @@ class KafkaSnapshotStore extends SnapshotStore with MetadataConsumer with ActorL
 
   def load(topic: String, matcher: KafkaSnapshot => Boolean): Option[KafkaSnapshot] = {
     val offset = offsetFor(topic, config.partition)
+
+    log.debug("KafkaSnapshotStore.load offset = {}", offset)
 
     @annotation.tailrec
     def load(topic: String, offset: Long): Option[KafkaSnapshot] =
@@ -148,18 +165,29 @@ class KafkaSnapshotStore extends SnapshotStore with MetadataConsumer with ActorL
     * Fetches the highest sequence number for `persistenceId` from the journal actor.
     */
   private def highestJournalSequenceNr(persistenceId: String): Future[Long] = {
+    log.debug("Requesting highest seq Nr...")
 
-    val journal = Persistence.get(system).journalFor(persistenceId)
+    val journal = persistence.journalFor(null)
+    log.debug("Obtained journal for requesting highest seq Nr...")
     val promise = Promise[Any]()
 
-    val t = config.consumerConfig.getLong("session.timeout.ms")
+    val ms = config.consumerConfig.getLong("session.timeout.ms")
+    implicit val timeout: Timeout = ms milliseconds
 
-    implicit val timeout: Timeout = t milliseconds
-
-    (journal ? ReadHighestSequenceNr(0L, persistenceId)).flatMap {
-      case ReadHighestSequenceNrSuccess(snr) => Future.successful(snr)
-      case ReadHighestSequenceNrFailure(err) => Future.failed(err)
+    val t = (journal ? ReadHighestSequenceNr(0L, persistenceId)).flatMap {
+      case ReadHighestSequenceNrSuccess(snr) =>
+        log.debug(s"ReadHighestSequenceNr succeeded with $snr")
+        Future.successful(snr)
+      case ReadHighestSequenceNrFailure(err) =>
+        log.error("ReadHighestSequenceNr failed {}", err)
+        Future.failed(err)
     }
+
+    t.onComplete {
+      case Success(snr) => log.debug("Received snr {}", snr)
+      case Failure(e)   => log.error("SNR request failed", e)
+    }
+    t
   }
 
   private def snapshot(topic: String, offset: Long): KafkaSnapshot = {

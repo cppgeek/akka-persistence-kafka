@@ -55,10 +55,7 @@ class MessageIterator(topic: String, part: Int, offset: Long, consumerConfig: Co
 
     import scala.collection.JavaConverters._
 
-    val result = response.iterator().asScala
-    log.debug("Returning message iterator {}", result)
-
-    result
+    response.iterator().asScala
   }
 
   def next(): Array[Byte] = {
