@@ -27,6 +27,7 @@ import org.apache.kafka.clients.producer.ProducerRecord
 import com.typesafe.config.Config
 import org.apache.kafka.clients.producer.RecordMetadata
 import java.util.concurrent.CompletableFuture
+import java.util.UUID
 
 /**
   * Request to read the highest stored sequence number of a given persistent actor.
@@ -50,6 +51,8 @@ case class ReadHighestSequenceNrSuccess(highestSequenceNr: Long)
   * @param cause failure cause.
   */
 case class ReadHighestSequenceNrFailure(cause: Throwable)
+
+case class JournalEntry(batchId: String, batchSize: Int, data: PersistentRepr)
 
 class KafkaJournal extends AsyncWriteJournal with MetadataConsumer with ActorLogging {
   import context.dispatcher
@@ -143,21 +146,42 @@ class KafkaJournal extends AsyncWriteJournal with MetadataConsumer with ActorLog
 
     val iter = persistentIterator(journalTopic(persistenceId), adjustedFrom - 1L)
 
-    iter.map(p => if (p.sequenceNr <= deletedTo) p.update(deleted = true) else p).foldLeft(adjustedFrom) {
-      case (_, p) =>
-        if (p.sequenceNr >= adjustedFrom && p.sequenceNr <= adjustedTo) {
-          callback(p)
-        }
-        p.sequenceNr
+    val batch: Seq[JournalEntry] = Nil
+
+    iter.map(j => if (j.data.sequenceNr <= deletedTo) j.copy(data = j.data.update(deleted = true)) else j).foldLeft(batch) { (b, j) =>
+      log.debug("Replaying msg {}", j)
+      b match {
+        case h :: t if h.batchId == j.batchId =>
+          val b1 = h :: (t :+ j)
+          if (b1.size == h.batchSize) {
+            b1.foreach(invokeCallback)
+            Nil
+          } else
+            b1
+
+        case _ =>
+          if (j.batchSize == 1) {
+            invokeCallback(j)
+            Nil
+          } else {
+            List(j) // Starting a new atomic batch
+          }
+      }
     }
+
+    def invokeCallback(j: JournalEntry) =
+      if (j.data.sequenceNr >= adjustedFrom && j.data.sequenceNr <= adjustedTo) {
+        log.debug("Passing to callback {}", j.data)
+        callback(j.data)
+      }
 
   }
 
-  def persistentIterator(topic: String, offset: Long): Iterator[PersistentRepr] = {
+  def persistentIterator(topic: String, offset: Long): Iterator[JournalEntry] = {
     log.debug("Creating MessageIterator for topic {}, offset {}", topic, offset)
     val msgIter = new MessageIterator(topic, config.partition, offset, config.consumerConfig)
     msgIter.map { m =>
-      serialization.deserialize(m, classOf[PersistentRepr]).get
+      serialization.deserialize(m, classOf[JournalEntry]).get
     }
   }
 }
@@ -208,10 +232,12 @@ private class KafkaJournalWriter(var config: KafkaJournalWriterConfig) extends A
       m <- messages
     } yield {
 
+      val batchId = UUID.randomUUID().toString()
       val atomicBatch = (for {
         p <- m.payload
       } yield {
-        config.serialization.serialize(p) match {
+        val entry = JournalEntry(batchId, m.size, p)
+        config.serialization.serialize(entry) match {
           case Success(s) => msgProducer.send(new ProducerRecord[String, Array[Byte]](journalTopic(m.persistenceId), "journal", s))
           case Failure(e) => val t = new CompletableFuture(); t.completeExceptionally(e); t
         }
