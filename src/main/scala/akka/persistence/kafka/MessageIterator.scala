@@ -13,6 +13,7 @@ import com.typesafe.config.Config
 import akka.event.Logging
 import akka.actor.ActorSystem
 import scala.annotation.tailrec
+import scala.collection.JavaConverters._
 
 object MessageUtil {
   def payloadBytes(m: Message): Array[Byte] = {
@@ -44,9 +45,9 @@ class MessageIterator(topic: String, part: Int, offset: Long, consumerConfig: Co
 
   def iterator(offset: Long): Iterator[ConsumerRecord[String, Array[Byte]]] = {
     log.debug("Creating iterator for offset {}", offset)
-    if (offset == -1)
-      consumer.seekToBeginning(partition)
-    else
+    if (offset == -1) {
+      consumer.seekToBeginning(List(partition).asJava)
+    } else
       consumer.seek(partition, offset)
 
     log.debug("Polling for records...")

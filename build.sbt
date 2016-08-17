@@ -4,6 +4,8 @@ name := "akka-persistence-kafka"
 
 version := "0.5-SNAPSHOT"
 
+isSnapshot := true
+
 scalaVersion := "2.11.6"
 
 scalacOptions += "-target:jvm-1.8"
@@ -14,7 +16,15 @@ resolvers += "krasserm at bintray" at "http://dl.bintray.com/krasserm/maven"
 
 //resolvers += Resolver.mavenLocal
 
-publishTo := Some(Resolver.mavenLocal)
+publishTo := {
+  if (isSnapshot.value) {
+    Some("Snapshots at Nexus" at "http://nexus:8081/nexus/content/repositories/snapshots/")
+  } else {
+    Some("Releases at Nexus" at "http://nexus:8081/nexus/content/repositories/releases/")
+  }
+}
+
+credentials += Credentials("Sonatype Nexus Repository Manager", "nexus", "admin", "admin123")
 
 parallelExecution in Test := false
 
@@ -42,9 +52,9 @@ libraryDependencies ++= Seq(
   "ch.qos.logback"       % "logback-classic"       % "1.1.2"   % "runtime",
   "com.typesafe.akka"    %% "akka-persistence-tck" % "2.4.6"   % Test,
   "commons-io"           %  "commons-io"           % "2.4"     % Test,
-  "org.apache.kafka"     %  "kafka-clients"        % "0.9.0.0",
+  "org.apache.kafka"     %  "kafka-clients"        % "0.10.0.0",
   "org.apache.zookeeper" %  "zookeeper"            % "3.4.6"   exclude("log4j", "log4j") exclude("org.slf4j", "slf4j-log4j12"),
-  "org.apache.kafka"     %% "kafka"                % "0.9.0.1" exclude("log4j", "log4j") exclude("org.slf4j", "slf4j-log4j12"),  
+  "org.apache.kafka"     %% "kafka"                % "0.10.0.0" exclude("log4j", "log4j") exclude("org.slf4j", "slf4j-log4j12"),  
   "org.apache.curator"   %  "curator-test"         % "2.7.1"   % Test,
   "org.apache.curator"   % "curator-client"        % "2.7.1"   % Test,
   "org.apache.curator"   % "curator-framework"     % "2.7.1"   % Test
@@ -52,4 +62,6 @@ libraryDependencies ++= Seq(
 )
 
 EclipseKeys.withSource := true
+
+
 

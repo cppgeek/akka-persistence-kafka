@@ -1,6 +1,7 @@
 package akka.persistence.kafka
 
 import scala.util._
+import scala.collection.JavaConverters._
 
 import kafka.api._
 import kafka.common._
@@ -86,7 +87,7 @@ trait MetadataConsumer {
     val p = new TopicPartition(topic, partition)
     val c = consumer(p)
     val result = Try {
-      c.seekToEnd(p)
+      c.seekToEnd(List(p).asJava)
       c.position(p)
     }
 

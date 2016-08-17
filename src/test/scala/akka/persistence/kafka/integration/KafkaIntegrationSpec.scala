@@ -17,6 +17,11 @@ import com.typesafe.config.ConfigFactory
 import org.scalatest._
 
 import _root_.kafka.message.Message
+import java.io.ByteArrayOutputStream
+import java.io.FileOutputStream
+import java.io.File
+import java.io.BufferedOutputStream
+import akka.persistence.kafka.journal.JournalEntry
 
 object KafkaIntegrationSpec {
   val config = ConfigFactory.parseString(
@@ -121,7 +126,14 @@ class KafkaIntegrationSpec extends PluginSpec(KafkaIntegrationSpec.config) with 
   }
 
   def readJournal(journalTopic: String): Seq[PersistentRepr] =
-    readMessages(journalTopic, 0).map(m => serialization.deserialize(m, classOf[PersistentRepr]).get)
+    readMessages(journalTopic, 0).map { m =>
+      val out = new BufferedOutputStream(new FileOutputStream(new File("/tmp/bytes")))
+      val b = m
+      out.write(m)
+      out.flush()
+      out.close()
+      serialization.deserialize(m, classOf[JournalEntry]).get.data
+    }
 
   def readEvents(partition: Int): Seq[Event] =
     readMessages("events", partition).map(m => eventDecoder.fromBytes(m))
