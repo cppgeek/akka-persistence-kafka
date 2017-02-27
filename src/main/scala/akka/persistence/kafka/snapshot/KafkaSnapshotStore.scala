@@ -185,7 +185,7 @@ class KafkaSnapshotStore extends SnapshotStore with MetadataConsumer with ActorL
 
     t.onComplete {
       case Success(snr) => log.debug("Received snr {}", snr)
-      case Failure(e)   => log.error("SNR request failed", e)
+      case Failure(e)   => log.error("SNR request failed {}", e)
     }
     t
   }
