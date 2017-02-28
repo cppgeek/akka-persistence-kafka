@@ -83,7 +83,7 @@ trait MetadataConsumer {
   //    }
   //  }
 
-  def offsetFor(topic: String, partition: Int): Option[Long] = {
+  def offsetFor(topic: String, partition: Int): Try[Long] = {
     val p = new TopicPartition(topic, partition)
     val c = consumer(p)
     val result = Try {
@@ -95,11 +95,13 @@ trait MetadataConsumer {
 
     c.close
 
-    result match {
-      case Success(off)                       => Option(off)
-      case Failure(e: InvalidOffsetException) => None
-      case Failure(e)                         => throw e
-    }
+    //    result match {
+    //      case Success(off)                       => Option(off)
+    //      case Failure(e: InvalidOffsetException) => None
+    //      case Failure(e)                         => throw e
+    //    }
+
+    result
 
     //    val offsetRequest = OffsetRequest(Map(TopicAndPartition(topic, partition) -> PartitionOffsetRequestInfo(OffsetRequest.LatestTime, 1)))
     //    val offsetResponse = try { c.getOffsetsBefore(offsetRequest) } finally { consumer.close() }

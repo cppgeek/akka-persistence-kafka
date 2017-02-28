@@ -19,7 +19,7 @@ object KafkaLoadSpec {
     """
       |akka {
       |  loggers = ["akka.event.slf4j.Slf4jLogger"]
-      |  loglevel = "DEBUG"
+      |  loglevel = "INFO"
       | }
       |akka.persistence.journal.plugin = "kafka-journal"
       |akka.persistence.snapshot-store.plugin = "kafka-snapshot-store"
@@ -94,6 +94,8 @@ class KafkaLoadSpec extends JournalPerfSpec(KafkaLoadSpec.config) with ImplicitS
   val server = new TestServer(system, serverConfig)
 
   def supportsRejectingNonSerializableObjects: CapabilityFlag = true
+
+  //  override def awaitDurationMillis: Long = 20.seconds.toMillis
 
   override protected def beforeAll(): Unit = {
     super.beforeAll()

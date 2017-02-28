@@ -69,9 +69,10 @@ class KafkaJournal extends AsyncWriteJournal with MetadataConsumer with ActorLog
 
     case ReadHighestSequenceNr(fromSequenceNr, persistenceId) =>
       log.debug("Processing request for highest seq no")
-      val highestTry = Try {
+      val highestTry =
+        //        Try {
         readHighestSequenceNr(persistenceId, fromSequenceNr)
-      }
+      //      }
 
       highestTry match {
         case Success(h) => sender ! ReadHighestSequenceNrSuccess(h)
@@ -120,14 +121,18 @@ class KafkaJournal extends AsyncWriteJournal with MetadataConsumer with ActorLog
   // --------------------------------------------------------------------------------------
 
   def asyncReadHighestSequenceNr(persistenceId: String, fromSequenceNr: Long): Future[Long] =
-    Future(readHighestSequenceNr(persistenceId, fromSequenceNr))
-
-  def readHighestSequenceNr(persistenceId: String, fromSequenceNr: Long): Long = {
-    val topic = journalTopic(persistenceId)
-    offsetFor(topic, config.partition) match {
-      case Some(off) => off
-      case None      => fromSequenceNr
+    readHighestSequenceNr(persistenceId, fromSequenceNr) match {
+      case Success(off) => Future.successful(off)
+      case Failure(e)   => Future.failed(e)
     }
+
+  def readHighestSequenceNr(persistenceId: String, fromSequenceNr: Long): Try[Long] = {
+    val topic = journalTopic(persistenceId)
+    offsetFor(topic, config.partition)
+    //    match {
+    //      case Some(off) => off
+    //      case None      => fromSequenceNr
+    //    }
   }
 
   def asyncReplayMessages(persistenceId: String, fromSequenceNr: Long, toSequenceNr: Long, max: Long)(replayCallback: PersistentRepr => Unit): Future[Unit] = {
@@ -223,7 +228,8 @@ private class KafkaJournalWriter(var config: KafkaJournalWriterConfig) extends A
     def batchResult(atomicBatch: Seq[Future[Try[RecordMetadata]]]): Future[Try[Unit]] =
       atomicBatch.foldLeft(Future.successful(Success(): Try[Unit])) { (acc, f) =>
         f.flatMap {
-          case Failure(e) => Future.successful(Failure(e))
+          //          case Failure(e) => Future.successful(Failure(e))
+          case Failure(e) => Future.failed(e)
           case _          => acc
         }
       }
