@@ -193,9 +193,9 @@ class KafkaJournal extends AsyncWriteJournal with MetadataConsumer with ActorLog
 
 private case class KafkaJournalWriterConfig(
   journalProducerConfig: Config,
-  eventProducerConfig: Config,
-  evtTopicMapper: EventTopicMapper,
-  serialization: Serialization)
+  eventProducerConfig:   Config,
+  evtTopicMapper:        EventTopicMapper,
+  serialization:         Serialization)
 
 private case class UpdateKafkaJournalWriterConfig(config: KafkaJournalWriterConfig)
 
@@ -243,9 +243,22 @@ private class KafkaJournalWriter(var config: KafkaJournalWriterConfig) extends A
         p <- m.payload
       } yield {
         val entry = JournalEntry(batchId, m.size, p)
+
+        val failedFuture: Throwable => CompletableFuture[Nothing] = { e =>
+          val t = new CompletableFuture(); t.completeExceptionally(e); t
+        }
+
         config.serialization.serialize(entry) match {
-          case Success(s) => msgProducer.send(new ProducerRecord[String, Array[Byte]](journalTopic(m.persistenceId), "journal", s))
-          case Failure(e) => val t = new CompletableFuture(); t.completeExceptionally(e); t
+          case Success(s) =>
+            Try {
+              msgProducer.send(new ProducerRecord[String, Array[Byte]](journalTopic(m.persistenceId), "journal", s))
+            } recover {
+              case e =>
+                log.error(e, "AtomicWrites failed")
+                failedFuture(e)
+            } get
+
+          case Failure(e) => failedFuture(e)
         }
       }) map { x => Future { Try { x.get } } }
 
