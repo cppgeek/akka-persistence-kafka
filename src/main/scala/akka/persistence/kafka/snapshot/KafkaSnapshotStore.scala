@@ -21,6 +21,7 @@ import org.apache.kafka.clients.producer.KafkaProducer
 import org.apache.kafka.clients.producer.ProducerRecord
 import org.apache.kafka.clients.producer.Callback
 import org.apache.kafka.clients.producer.RecordMetadata
+import java.util.NoSuchElementException
 
 /**
   * Optimized and fully async version of [[akka.persistence.snapshot.SnapshotStore]].
@@ -152,13 +153,19 @@ class KafkaSnapshotStore extends SnapshotStore with MetadataConsumer with ActorL
       @annotation.tailrec
       def load(topic: String, offset: Long): Option[KafkaSnapshot] =
         if (offset < 0) None else {
-          val s = snapshot(topic, offset)
-          if (matcher(s)) Some(s) else load(topic, offset - 1)
+          val t = trySnapshot(topic, offset)
+          t match {
+            case Success(s) => if (matcher(s)) Some(s) else load(topic, offset - 1)
+            case Failure(e: NoSuchElementException) =>
+              log.warning("Recovering from bad offset {} for topic {}", offset, topic)
+              load(topic, offset - 1)
+            case Failure(e) =>
+              log.error(e, "Unable to load snapshot from topic {}", topic)
+              None
+          }
         }
 
-      //      offset map { off =>
       load(topic, off - 1)
-      //      }
 
     } match {
       case Success(s) => s
@@ -196,9 +203,14 @@ class KafkaSnapshotStore extends SnapshotStore with MetadataConsumer with ActorL
     t
   }
 
-  private def snapshot(topic: String, offset: Long): KafkaSnapshot = {
+  private def trySnapshot(topic: String, offset: Long): Try[KafkaSnapshot] = {
     val iter = new MessageIterator(topic, config.partition, offset, config.consumerConfig)
-    try { serialization.deserialize(iter.next(), classOf[KafkaSnapshot]).get } finally { iter.close() }
+    val result = for {
+      data <- Try(iter.next)
+      snap <- serialization.deserialize(data, classOf[KafkaSnapshot])
+    } yield snap
+    iter.close()
+    result
   }
 
   private def snapshotTopic(persistenceId: String): String =
